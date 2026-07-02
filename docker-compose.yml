@@ -14,13 +14,19 @@ services:
       MONGO_INITDB_ROOT_PASSWORD: password
     networks:
       - bot_network
+    healthcheck:
+      test: echo 'db.runCommand("ping").ok' | mongosh localhost:27017/test --quiet
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   telegram-bot:
     build: .
     container_name: telegram_report_bot
     restart: unless-stopped
     depends_on:
-      - mongodb
+      mongodb:
+        condition: service_healthy
     environment:
       - API_ID=${API_ID}
       - API_HASH=${API_HASH}
@@ -29,6 +35,7 @@ services:
       - OWNER_ID=${OWNER_ID}
     volumes:
       - ./sessions:/app/sessions
+      - ./logs:/app/logs
     env_file:
       - .env
     networks:
