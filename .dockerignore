@@ -1,0 +1,13 @@
+__pycache__
+*.pyc
+*.pyo
+*.pyd
+.Python
+env/
+venv/
+*.log
+sessions/
+.env.local
+.git/
+.gitignore
+README.md
