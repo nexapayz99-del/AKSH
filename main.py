@@ -2173,9 +2173,8 @@ async def main():
     await bot.start()
     print("✅ Bot started successfully!")
 
-    await idle()
-
-    await bot.stop()
+    while True:
+        await asyncio.sleep(3600)
 
 if __name__ == "__main__":
     asyncio.run(main())
