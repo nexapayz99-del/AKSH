@@ -2165,14 +2165,16 @@ async def redeem_tk(client, message: Message):
 # --- MAIN ---
 print("🤖 Bot is starting...")
 
+from pyrogram import idle
+
 async def main():
-    # Start keep-alive task
     asyncio.create_task(keep_alive_sessions())
-    
-    # Start bot
+
     await bot.start()
     print("✅ Bot started successfully!")
-    await bot.idle()
+
+    await idle()
+
     await bot.stop()
 
 if __name__ == "__main__":
