@@ -2238,10 +2238,12 @@ print(f"MONGO_URI: {MONGO_URI}")
 async def main():
     try:
         # Start keep-alive task
-        asyncio.create_task(keep_alive_sessions())
+    
         
         # Start bot
         await bot.start()
+        
+        #asyncio.create_task(keep_alive_sessions())
         print("✅ Bot started successfully!")
         print(f"Bot username: @{(await bot.get_me()).username}")
         await idle()
