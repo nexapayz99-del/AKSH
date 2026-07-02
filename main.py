@@ -36,22 +36,22 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 OWNER_ID = int(os.getenv("OWNER_ID", 0))
 
-# Database Setup
+# Database Setup - Using your existing database
 db_client = AsyncIOMotorClient(MONGO_URI)
-db = db_client["telegram_bot"]
-accounts_col = db["sessions"]
-users_col = db["authorized_users"]
-tokens_col = db["keys"]
-admin_col = db["admins"]
-logs_col = db["report_logs"]
-refund_logs_col = db["refund_logs"]
-receipts_col = db["api_receipts"]
-credit_logs_col = db["credit_logs"]
+db = db_client["telegram_bot"]  # Your existing database
+accounts_col = db["sessions"]  # Your existing sessions collection
+users_col = db["authorized_users"]  # Your existing users collection
+tokens_col = db["keys"]  # Your existing tokens collection
+admin_col = db["admins"]  # Your existing admins collection
+logs_col = db["report_logs"]  # Your existing logs collection
+refund_logs_col = db["refund_logs"]  # Your existing refund logs
+receipts_col = db["api_receipts"]  # Your existing receipts
+credit_logs_col = db["credit_logs"]  # Your existing credit logs
 
 bot = Client(
-    "report_bot", 
-    api_id=API_ID, 
-    api_hash=API_HASH, 
+    "report_bot",
+    api_id=API_ID,
+    api_hash=API_HASH,
     bot_token=BOT_TOKEN
 )
 
@@ -68,10 +68,14 @@ SPOOF_DEVICES = [
     {"device_model": "iPhone 13 Pro", "system_version": "iOS 17.1", "app_version": "10.10.0"},
     {"device_model": "Samsung Galaxy S24 Ultra", "system_version": "Android 14", "app_version": "10.12.0"},
     {"device_model": "Samsung Galaxy S23", "system_version": "Android 13", "app_version": "10.11.2"},
+    {"device_model": "Samsung Galaxy Z Fold 5", "system_version": "Android 14", "app_version": "10.9.1"},
     {"device_model": "Google Pixel 8 Pro", "system_version": "Android 14", "app_version": "10.12.0"},
+    {"device_model": "Google Pixel 7a", "system_version": "Android 13", "app_version": "10.8.2"},
     {"device_model": "OnePlus 12", "system_version": "Android 14", "app_version": "10.11.1"},
     {"device_model": "Windows PC", "system_version": "Windows 11", "app_version": "4.16.2"},
+    {"device_model": "Windows PC", "system_version": "Windows 10", "app_version": "4.15.0"},
     {"device_model": "MacBook Pro", "system_version": "macOS 14.3", "app_version": "9.6.0"},
+    {"device_model": "MacBook Air M2", "system_version": "macOS 13.5", "app_version": "9.5.1"}
 ]
 
 def get_spoofed_device():
@@ -216,11 +220,11 @@ async def keep_alive_sessions():
                         await asyncio.sleep(1)
                         dev = get_spoofed_device()
                         async with Client(
-                            f"keepalive_{uuid.uuid4().hex[:8]}", 
-                            in_memory=True, 
-                            no_updates=True, 
+                            f"keepalive_{uuid.uuid4().hex[:8]}",
+                            in_memory=True,
+                            no_updates=True,
                             session_string=acc["session"],
-                            api_id=API_ID, 
+                            api_id=API_ID,
                             api_hash=API_HASH,
                             device_model=dev["device_model"],
                             system_version=dev["system_version"],
@@ -409,7 +413,7 @@ async def process_reporting(message, uid):
     
     target_type = data.get("target_type", "channel")
     reason, text_list = reason_mappings.get(
-        data["mode"], 
+        data["mode"],
         (types.InputReportReasonOther(), ["Violation of Telegram Terms of Service. #scam"])
     )
     
@@ -703,7 +707,6 @@ async def process_reporting(message, uid):
         if os.path.exists(log_filename):
             os.remove(log_filename)
     
-    # Handle credits
     if s > 0:
         if uid != OWNER_ID:
             refund_amount = total_expected - s
@@ -766,6 +769,258 @@ async def process_reporting(message, uid):
     
     if uid in active_tasks:
         del active_tasks[uid]
+    if uid in user_data:
+        del user_data[uid]
+
+# --- MASS JOIN/LEAVE FUNCTIONS ---
+async def mass_join(message, link):
+    accs = await accounts_col.find({}).to_list(length=1000)
+    if not accs:
+        return await message.reply("❌ No accounts logged in.")
+    
+    if "/c/" in link:
+        return await message.reply("❌ **Error:** You cannot join using a `/c/` message link.")
+    
+    join_target = link.strip()
+    if "+" in join_target:
+        hash_val = join_target.split("+")[-1].split("/")[0].split("?")[0]
+        join_target = f"https://t.me/+{hash_val}"
+    
+    status_msg = await message.reply(
+        f"🛰 **Mass Join Started**\n"
+        f"Target: `{join_target}`\n"
+        f"Processing {len(accs)} IDs..."
+    )
+    s, f, req = 0, 0, 0
+    
+    for i, acc in enumerate(accs):
+        try:
+            dev = get_spoofed_device()
+            async with Client(
+                f"temp_join_{uuid.uuid4().hex[:8]}",
+                in_memory=True,
+                no_updates=True,
+                session_string=acc["session"],
+                api_id=API_ID,
+                api_hash=API_HASH,
+                device_model=dev["device_model"],
+                system_version=dev["system_version"],
+                app_version=dev["app_version"]
+            ) as app:
+                await app.invoke(functions.account.UpdateStatus(offline=False))
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+                await app.join_chat(join_target)
+                s += 1
+        except UserAlreadyParticipant:
+            s += 1
+        except Exception as e:
+            if "INVITE_REQUEST_SENT" in str(e).upper():
+                req += 1
+                s += 1
+            else:
+                f += 1
+        
+        if i % 3 == 0 or i == len(accs) - 1:
+            await status_msg.edit_text(
+                f"🛰 **Joining...**\n"
+                f"✅ S: {s} (Req: {req}) | ❌ F: {f}\n"
+                f"⏳ Progress: {i+1}/{len(accs)}"
+            )
+        if i < len(accs) - 1:
+            await asyncio.sleep(1)
+    
+    await status_msg.edit_text(
+        f"🏁 **Mass Join Done**\n"
+        f"✅ Success: `{s}` (Requests Sent: `{req}`)\n"
+        f"❌ Fail: `{f}`"
+    )
+
+async def mass_leave(message, target_raw):
+    accs = await accounts_col.find({}).to_list(length=1000)
+    if not accs:
+        return await message.reply("❌ No accounts logged in.")
+    
+    leave_target = target_raw.strip()
+    
+    # Parse target
+    if "t.me/" in leave_target:
+        path = leave_target.split("t.me/")[-1]
+        parts = path.split("/")
+        if "+" in leave_target or "joinchat/" in leave_target:
+            return await message.reply("❌ **Error:** You cannot leave using an invite link. Use raw ID or username.")
+        elif path.startswith("c/"):
+            leave_target = int(f"-100{parts[1]}")
+        elif parts[-1].isdigit() and len(parts) >= 2:
+            leave_target = parts[-2]
+        else:
+            leave_target = parts[-1]
+    elif leave_target.startswith("@"):
+        leave_target = leave_target.replace("@", "")
+    else:
+        if leave_target.lstrip('-').isdigit():
+            leave_target = int(leave_target)
+    
+    status_msg = await message.reply(
+        f"🚪 **Mass Leave Started**\n"
+        f"Target: `{leave_target}`\n"
+        f"Processing {len(accs)} IDs..."
+    )
+    s, f = 0, 0
+    
+    for i, acc in enumerate(accs):
+        try:
+            dev = get_spoofed_device()
+            async with Client(
+                f"temp_leave_{uuid.uuid4().hex[:8]}",
+                in_memory=True,
+                no_updates=True,
+                session_string=acc["session"],
+                api_id=API_ID,
+                api_hash=API_HASH,
+                device_model=dev["device_model"],
+                system_version=dev["system_version"],
+                app_version=dev["app_version"]
+            ) as app:
+                await app.invoke(functions.account.UpdateStatus(offline=False))
+                await asyncio.sleep(random.uniform(1.0, 3.0))
+                
+                actual_target = leave_target
+                left_successfully = False
+                
+                try:
+                    await app.leave_chat(actual_target)
+                    left_successfully = True
+                except Exception:
+                    pass
+                
+                if not left_successfully:
+                    async for dialog in app.get_dialogs(limit=500):
+                        chat_id_str = str(dialog.chat.id)
+                        target_str = str(actual_target)
+                        if (chat_id_str == target_str or 
+                            chat_id_str.replace("-100", "") == target_str.replace("-100", "") or
+                            (hasattr(dialog.chat, 'username') and dialog.chat.username and
+                             str(dialog.chat.username).lower() == str(actual_target).lower())):
+                            try:
+                                await app.leave_chat(dialog.chat.id)
+                                left_successfully = True
+                                break
+                            except Exception:
+                                break
+                
+                if left_successfully:
+                    s += 1
+                else:
+                    raise Exception("PeerIdInvalid")
+        except Exception:
+            f += 1
+        
+        if i % 3 == 0 or i == len(accs) - 1:
+            await status_msg.edit_text(
+                f"🚪 **Leaving...**\n"
+                f"✅ S: {s} | ❌ F: {f}\n"
+                f"⏳ Progress: {i+1}/{len(accs)}"
+            )
+        if i < len(accs) - 1:
+            await asyncio.sleep(1)
+    
+    await status_msg.edit_text(
+        f"🏁 **Mass Leave Done**\n"
+        f"✅ Success: `{s}`\n"
+        f"❌ Fail: `{f}`"
+    )
+
+# --- HEALTH CHECK ---
+async def perform_health_check(message):
+    accs = await accounts_col.find({}).to_list(length=1000)
+    if not accs:
+        return await message.reply("❌ No accounts to check.")
+    
+    status_msg = await message.reply(
+        f"🩺 **Health Check Started...**\n"
+        f"Checking {len(accs)} sessions."
+    )
+    alive, dead = 0, 0
+    dead_list = []
+    
+    for i, acc in enumerate(accs):
+        is_dead = False
+        try:
+            dev = get_spoofed_device()
+            async with Client(
+                f"temp_health_{uuid.uuid4().hex[:8]}",
+                in_memory=True,
+                no_updates=True,
+                session_string=acc["session"],
+                api_id=API_ID,
+                api_hash=API_HASH,
+                device_model=dev["device_model"],
+                system_version=dev["system_version"],
+                app_version=dev["app_version"]
+            ) as app:
+                await app.invoke(functions.account.UpdateStatus(offline=False))
+                await app.get_me()
+                alive += 1
+        except Exception:
+            is_dead = True
+        
+        if is_dead:
+            dead += 1
+            phone_val = acc.get('phone', 'Unknown')
+            acc_id = acc.get('user_id', 'Unknown')
+            dead_list.append(f"📞 `{phone_val}` | 🆔 `{acc_id}`")
+        
+        if i % 5 == 0 or i == len(accs) - 1:
+            await status_msg.edit_text(
+                f"🩺 **Checking Health...**\n"
+                f"✅ Alive: `{alive}`\n"
+                f"💀 Dead: `{dead}`\n"
+                f"⏳ Progress: {i+1}/{len(accs)}"
+            )
+        
+        await asyncio.sleep(0.3)
+    
+    res = (
+        f"🏁 **Health Check Result**\n"
+        f"✅ Alive: `{alive}`\n"
+        f"💀 Dead/Unusable: `{dead}`\n\n"
+        f"💡 Use `/cleandead` to remove dead IDs."
+    )
+    
+    if dead_list:
+        res_list = "\n\n💀 **Dead Accounts:**\n" + "\n".join(dead_list)
+        if len(res + res_list) > 4000:
+            with open("dead_accounts.txt", "w", encoding="utf-8") as f:
+                f.write("\n".join(dead_list))
+            await message.reply_document("dead_accounts.txt", caption=res)
+            os.remove("dead_accounts.txt")
+            await status_msg.delete()
+        else:
+            await status_msg.edit_text(res + res_list)
+    else:
+        await status_msg.edit_text(res)
+
+# --- FINALIZE LOGIN ---
+async def finalize_login(message, temp, uid):
+    ss = await temp.export_session_string()
+    me = await temp.get_me()
+    
+    await accounts_col.update_one(
+        {"user_id": me.id},
+        {
+            "$set": {
+                "session": ss,
+                "phone": me.phone_number,
+                "name": me.first_name,
+                "user_id": me.id
+            }
+        },
+        upsert=True
+    )
+    
+    await message.reply(f"✅ Added {me.first_name}.")
+    await temp.disconnect()
+    
     if uid in user_data:
         del user_data[uid]
 
@@ -1513,258 +1768,6 @@ async def sub_button_handler(client, callback_query):
     elif data == "cmd_leave":
         user_data[uid] = {"step": "leave"}
         await callback_query.message.reply("🚪 Send the Link or Username to leave:")
-
-# --- MASS JOIN/LEAVE FUNCTIONS ---
-async def mass_join(message, link):
-    accs = await accounts_col.find({}).to_list(length=1000)
-    if not accs:
-        return await message.reply("❌ No accounts logged in.")
-    
-    if "/c/" in link:
-        return await message.reply("❌ **Error:** You cannot join using a `/c/` message link.")
-    
-    join_target = link.strip()
-    if "+" in join_target:
-        hash_val = join_target.split("+")[-1].split("/")[0].split("?")[0]
-        join_target = f"https://t.me/+{hash_val}"
-    
-    status_msg = await message.reply(
-        f"🛰 **Mass Join Started**\n"
-        f"Target: `{join_target}`\n"
-        f"Processing {len(accs)} IDs..."
-    )
-    s, f, req = 0, 0, 0
-    
-    for i, acc in enumerate(accs):
-        try:
-            dev = get_spoofed_device()
-            async with Client(
-                f"temp_join_{uuid.uuid4().hex[:8]}",
-                in_memory=True,
-                no_updates=True,
-                session_string=acc["session"],
-                api_id=API_ID,
-                api_hash=API_HASH,
-                device_model=dev["device_model"],
-                system_version=dev["system_version"],
-                app_version=dev["app_version"]
-            ) as app:
-                await app.invoke(functions.account.UpdateStatus(offline=False))
-                await asyncio.sleep(random.uniform(1.0, 3.0))
-                await app.join_chat(join_target)
-                s += 1
-        except UserAlreadyParticipant:
-            s += 1
-        except Exception as e:
-            if "INVITE_REQUEST_SENT" in str(e).upper():
-                req += 1
-                s += 1
-            else:
-                f += 1
-        
-        if i % 3 == 0 or i == len(accs) - 1:
-            await status_msg.edit_text(
-                f"🛰 **Joining...**\n"
-                f"✅ S: {s} (Req: {req}) | ❌ F: {f}\n"
-                f"⏳ Progress: {i+1}/{len(accs)}"
-            )
-        if i < len(accs) - 1:
-            await asyncio.sleep(1)
-    
-    await status_msg.edit_text(
-        f"🏁 **Mass Join Done**\n"
-        f"✅ Success: `{s}` (Requests Sent: `{req}`)\n"
-        f"❌ Fail: `{f}`"
-    )
-
-async def mass_leave(message, target_raw):
-    accs = await accounts_col.find({}).to_list(length=1000)
-    if not accs:
-        return await message.reply("❌ No accounts logged in.")
-    
-    leave_target = target_raw.strip()
-    
-    # Parse target
-    if "t.me/" in leave_target:
-        path = leave_target.split("t.me/")[-1]
-        parts = path.split("/")
-        if "+" in leave_target or "joinchat/" in leave_target:
-            return await message.reply("❌ **Error:** You cannot leave using an invite link. Use raw ID or username.")
-        elif path.startswith("c/"):
-            leave_target = int(f"-100{parts[1]}")
-        elif parts[-1].isdigit() and len(parts) >= 2:
-            leave_target = parts[-2]
-        else:
-            leave_target = parts[-1]
-    elif leave_target.startswith("@"):
-        leave_target = leave_target.replace("@", "")
-    else:
-        if leave_target.lstrip('-').isdigit():
-            leave_target = int(leave_target)
-    
-    status_msg = await message.reply(
-        f"🚪 **Mass Leave Started**\n"
-        f"Target: `{leave_target}`\n"
-        f"Processing {len(accs)} IDs..."
-    )
-    s, f = 0, 0
-    
-    for i, acc in enumerate(accs):
-        try:
-            dev = get_spoofed_device()
-            async with Client(
-                f"temp_leave_{uuid.uuid4().hex[:8]}",
-                in_memory=True,
-                no_updates=True,
-                session_string=acc["session"],
-                api_id=API_ID,
-                api_hash=API_HASH,
-                device_model=dev["device_model"],
-                system_version=dev["system_version"],
-                app_version=dev["app_version"]
-            ) as app:
-                await app.invoke(functions.account.UpdateStatus(offline=False))
-                await asyncio.sleep(random.uniform(1.0, 3.0))
-                
-                actual_target = leave_target
-                left_successfully = False
-                
-                try:
-                    await app.leave_chat(actual_target)
-                    left_successfully = True
-                except Exception:
-                    pass
-                
-                if not left_successfully:
-                    async for dialog in app.get_dialogs(limit=500):
-                        chat_id_str = str(dialog.chat.id)
-                        target_str = str(actual_target)
-                        if (chat_id_str == target_str or 
-                            chat_id_str.replace("-100", "") == target_str.replace("-100", "") or
-                            (hasattr(dialog.chat, 'username') and dialog.chat.username and
-                             str(dialog.chat.username).lower() == str(actual_target).lower())):
-                            try:
-                                await app.leave_chat(dialog.chat.id)
-                                left_successfully = True
-                                break
-                            except Exception:
-                                break
-                
-                if left_successfully:
-                    s += 1
-                else:
-                    raise Exception("PeerIdInvalid")
-        except Exception:
-            f += 1
-        
-        if i % 3 == 0 or i == len(accs) - 1:
-            await status_msg.edit_text(
-                f"🚪 **Leaving...**\n"
-                f"✅ S: {s} | ❌ F: {f}\n"
-                f"⏳ Progress: {i+1}/{len(accs)}"
-            )
-        if i < len(accs) - 1:
-            await asyncio.sleep(1)
-    
-    await status_msg.edit_text(
-        f"🏁 **Mass Leave Done**\n"
-        f"✅ Success: `{s}`\n"
-        f"❌ Fail: `{f}`"
-    )
-
-# --- HEALTH CHECK ---
-async def perform_health_check(message):
-    accs = await accounts_col.find({}).to_list(length=1000)
-    if not accs:
-        return await message.reply("❌ No accounts to check.")
-    
-    status_msg = await message.reply(
-        f"🩺 **Health Check Started...**\n"
-        f"Checking {len(accs)} sessions."
-    )
-    alive, dead = 0, 0
-    dead_list = []
-    
-    for i, acc in enumerate(accs):
-        is_dead = False
-        try:
-            dev = get_spoofed_device()
-            async with Client(
-                f"temp_health_{uuid.uuid4().hex[:8]}",
-                in_memory=True,
-                no_updates=True,
-                session_string=acc["session"],
-                api_id=API_ID,
-                api_hash=API_HASH,
-                device_model=dev["device_model"],
-                system_version=dev["system_version"],
-                app_version=dev["app_version"]
-            ) as app:
-                await app.invoke(functions.account.UpdateStatus(offline=False))
-                await app.get_me()
-                alive += 1
-        except Exception:
-            is_dead = True
-        
-        if is_dead:
-            dead += 1
-            phone_val = acc.get('phone', 'Unknown')
-            acc_id = acc.get('user_id', 'Unknown')
-            dead_list.append(f"📞 `{phone_val}` | 🆔 `{acc_id}`")
-        
-        if i % 5 == 0 or i == len(accs) - 1:
-            await status_msg.edit_text(
-                f"🩺 **Checking Health...**\n"
-                f"✅ Alive: `{alive}`\n"
-                f"💀 Dead: `{dead}`\n"
-                f"⏳ Progress: {i+1}/{len(accs)}"
-            )
-        
-        await asyncio.sleep(0.3)
-    
-    res = (
-        f"🏁 **Health Check Result**\n"
-        f"✅ Alive: `{alive}`\n"
-        f"💀 Dead/Unusable: `{dead}`\n\n"
-        f"💡 Use `/cleandead` to remove dead IDs."
-    )
-    
-    if dead_list:
-        res_list = "\n\n💀 **Dead Accounts:**\n" + "\n".join(dead_list)
-        if len(res + res_list) > 4000:
-            with open("dead_accounts.txt", "w", encoding="utf-8") as f:
-                f.write("\n".join(dead_list))
-            await message.reply_document("dead_accounts.txt", caption=res)
-            os.remove("dead_accounts.txt")
-            await status_msg.delete()
-        else:
-            await status_msg.edit_text(res + res_list)
-    else:
-        await status_msg.edit_text(res)
-
-# --- FINALIZE LOGIN ---
-async def finalize_login(message, temp, uid):
-    ss = await temp.export_session_string()
-    me = await temp.get_me()
-    
-    await accounts_col.update_one(
-        {"user_id": me.id},
-        {
-            "$set": {
-                "session": ss,
-                "phone": me.phone_number,
-                "name": me.first_name,
-                "user_id": me.id
-            }
-        },
-        upsert=True
-    )
-    
-    await message.reply(f"✅ Added {me.first_name}.")
-    await temp.disconnect()
-    
-    if uid in user_data:
-        del user_data[uid]
 
 # --- COMMAND HANDLERS ---
 @bot.on_message(filters.command("start") & filters.private)
