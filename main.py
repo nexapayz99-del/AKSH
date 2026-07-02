@@ -2244,7 +2244,7 @@ async def main():
         await bot.start()
         print("✅ Bot started successfully!")
         print(f"Bot username: @{(await bot.get_me()).username}")
-        await bot.idle()
+        await idle()
     except Exception as e:
         logger.error(f"Error in main: {e}")
         raise
