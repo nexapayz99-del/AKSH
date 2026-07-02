@@ -8,10 +8,12 @@ RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application
 COPY main.py .
-COPY .env .
 
 # Create sessions directory
 RUN mkdir -p /app/sessions
 
+# Set environment variable for unbuffered output
+ENV PYTHONUNBUFFERED=1
+
 # Run bot
-CMD ["python", "-u", "main.py"]
+CMD ["python", "main.py"]
