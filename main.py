@@ -1780,7 +1780,7 @@ async def main():
         print(f"🆔 Bot ID: {me.id}")
         print("📍 Bot is running. Press Ctrl+C to stop.")
         
-        await bot.idle()
+        await idle()
     except Exception as e:
         logger.error(f"❌ Error in main: {e}")
         raise
