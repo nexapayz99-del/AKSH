@@ -3,7 +3,7 @@ version: '3.8'
 services:
   telegram-bot:
     build: .
-    container_name: telegram_report_bot
+    container_name: aksh
     restart: unless-stopped
     environment:
       - PYTHONUNBUFFERED=1
@@ -15,4 +15,3 @@ services:
       - ./sessions:/app/sessions
     env_file:
       - .env
-    command: python -u main.py
