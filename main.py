@@ -1,4 +1,3 @@
-# main.py
 import os
 import asyncio
 import uuid
@@ -20,6 +19,7 @@ from pyrogram.raw import functions, types
 from motor.motor_asyncio import AsyncIOMotorClient
 from dotenv import load_dotenv
 
+# Load environment variables
 load_dotenv()
 
 # --- LOGGING SETUP ---
@@ -48,11 +48,13 @@ refund_logs_col = db["refund_logs"]
 receipts_col = db["api_receipts"]
 credit_logs_col = db["credit_logs"]
 
+# Initialize bot
 bot = Client(
     "report_bot",
     api_id=API_ID,
     api_hash=API_HASH,
-    bot_token=BOT_TOKEN
+    bot_token=BOT_TOKEN,
+    workdir="./sessions"
 )
 
 # --- STATE MANAGEMENT ---
@@ -228,7 +230,8 @@ async def keep_alive_sessions():
                             api_hash=API_HASH,
                             device_model=dev["device_model"],
                             system_version=dev["system_version"],
-                            app_version=dev["app_version"]
+                            app_version=dev["app_version"],
+                            workdir="./sessions"
                         ) as app:
                             await app.invoke(functions.account.UpdateStatus(offline=False))
                             await app.get_me()
@@ -514,7 +517,8 @@ async def process_reporting(message, uid):
                     api_hash=API_HASH,
                     device_model=dev["device_model"],
                     system_version=dev["system_version"],
-                    app_version=dev["app_version"]
+                    app_version=dev["app_version"],
+                    workdir="./sessions"
                 ) as app:
                     await app.invoke(functions.account.UpdateStatus(offline=False))
                     await asyncio.sleep(random.uniform(2.1, 4.8))
@@ -805,7 +809,8 @@ async def mass_join(message, link):
                 api_hash=API_HASH,
                 device_model=dev["device_model"],
                 system_version=dev["system_version"],
-                app_version=dev["app_version"]
+                app_version=dev["app_version"],
+                workdir="./sessions"
             ) as app:
                 await app.invoke(functions.account.UpdateStatus(offline=False))
                 await asyncio.sleep(random.uniform(1.0, 3.0))
@@ -879,7 +884,8 @@ async def mass_leave(message, target_raw):
                 api_hash=API_HASH,
                 device_model=dev["device_model"],
                 system_version=dev["system_version"],
-                app_version=dev["app_version"]
+                app_version=dev["app_version"],
+                workdir="./sessions"
             ) as app:
                 await app.invoke(functions.account.UpdateStatus(offline=False))
                 await asyncio.sleep(random.uniform(1.0, 3.0))
@@ -956,7 +962,8 @@ async def perform_health_check(message):
                 api_hash=API_HASH,
                 device_model=dev["device_model"],
                 system_version=dev["system_version"],
-                app_version=dev["app_version"]
+                app_version=dev["app_version"],
+                workdir="./sessions"
             ) as app:
                 await app.invoke(functions.account.UpdateStatus(offline=False))
                 await app.get_me()
@@ -1025,31 +1032,78 @@ async def finalize_login(message, temp, uid):
         del user_data[uid]
 
 # --- BOT HANDLERS ---
+
+# Fixed /start command handler
 @bot.on_message(filters.command("start") & filters.private)
 async def start_cmd(client, message: Message):
     """Handle /start command"""
+    try:
+        uid = message.from_user.id
+        logger.info(f"User {uid} started the bot")
+        
+        is_admin = await check_admin(uid)
+        
+        if await check_access(uid):
+            await message.reply(
+                "✅ **Bot Activated!**\n\n"
+                "Welcome to the Report Bot. Use the menu below to navigate.\n"
+                "Send /help to see all available commands.",
+                reply_markup=get_main_menu(uid, is_admin)
+            )
+        else:
+            await message.reply(
+                "⚠️ **Access Denied**\n\n"
+                "You are not authorized to use this bot.\n"
+                "Please use `/redeem TOKEN` to gain access."
+            )
+    except Exception as e:
+        logger.error(f"Error in start_cmd: {e}")
+        await message.reply(f"❌ Error: {str(e)}")
+
+@bot.on_message(filters.command("help") & filters.private)
+async def help_cmd(client, message: Message):
+    """Handle /help command"""
     uid = message.from_user.id
-    is_admin = await check_admin(uid)
+    logger.info(f"User {uid} requested help")
     
-    logger.info(f"User {uid} started the bot")
+    if not await check_access(uid):
+        await message.reply("⚠️ Access Denied. Please contact an administrator.")
+        return
     
-    if await check_access(uid):
-        await message.reply(
-            "✅ **Bot Activated!**\n\n"
-            "Welcome to the Report Bot. Use the menu below to navigate.",
-            reply_markup=get_main_menu(uid, is_admin)
-        )
-    else:
-        await message.reply(
-            "⚠️ **Access Denied**\n\n"
-            "You are not authorized to use this bot.\n"
-            "Please use `/redeem TOKEN` to gain access."
-        )
+    help_text = """
+📚 **Available Commands**
+
+**User Commands:**
+/start - Start the bot
+/help - Show this help message
+/stats - View your statistics
+/redeem TOKEN - Redeem access token
+
+**Reporting Commands:**
+🚀 Start Reporting - Report channels/groups
+🎯 DM Attack - Report user profiles
+🤖 Report Bot - Report Telegram bots
+🛑 Stop Reporting - Stop active task
+
+**Admin Commands:**
+📱 Add Account - Add Telegram account
+⚙️ Management - Admin panel
+📢 Broadcast - Send broadcast message
+💳 Add Credit - Add credits to users
+
+**Owner Commands:**
+👑 Owner Panel - Full control panel
+🗑 Flush All Accounts - Remove all accounts
+❌ Remove Account - Remove specific account
+
+Use the keyboard menu or type commands directly.
+"""
+    await message.reply(help_text, parse_mode='Markdown')
 
 @bot.on_message(filters.private & ~filters.command([
-    "start", "redeem", "addtoken", "addcredit", "broadcast",
+    "start", "help", "redeem", "addtoken", "addcredit", "broadcast",
     "addadmin", "rmadmin", "users", "rmuser", "join", "leave",
-    "health", "setcap", "dbcheck", "checkdead", "cleandead"
+    "health", "setcap", "dbcheck", "checkdead", "cleandead", "stats"
 ]))
 async def handle_all(client, message: Message):
     text = message.text or message.caption or ""
@@ -1061,6 +1115,32 @@ async def handle_all(client, message: Message):
         return
     
     is_adm = await check_admin(uid)
+    
+    # --- Stats Command ---
+    if text == "📊 Stats" or text == "/stats":
+        u = await users_col.find_one({"user_id": uid})
+        acc_count = await accounts_col.count_documents({})
+        last = await logs_col.find({
+            "user_id": uid,
+            "summary_task": True
+        }).sort("_id", -1).to_list(length=1)
+        
+        s, f = (last[0].get("s_count", 0), last[0].get("f_count", 0)) if last else (0, 0)
+        
+        live_tasks = sum(1 for status in active_tasks.values() if status in ["running", "paused"])
+        
+        stats_text = (
+            f"🏁 **Last Task Stats**\n"
+            f"✅ Success: {s}\n"
+            f"❌ Fail: {f}\n"
+            f"💳 Credit used: {s}\n"
+            f"👥 Active IDs: {acc_count}\n"
+            f"👤 **Credits:** `{u.get('credits', 0) if u else 0}`\n"
+        )
+        if is_adm or uid == OWNER_ID:
+            stats_text += f"\n🔥 **Live Reporting Tasks:** `{live_tasks}`"
+            
+        return await message.reply(stats_text, parse_mode='Markdown')
     
     # --- Owner Panel ---
     if text == "🗑 Flush All Accounts" and uid == OWNER_ID:
@@ -1096,17 +1176,8 @@ async def handle_all(client, message: Message):
         all_accs = await accounts_col.find({}).to_list(length=1000)
         t = "⚙️ **Management Panel**\n────────────────────\n"
         for i, acc in enumerate(all_accs, 1):
-            s = await logs_col.count_documents({
-                "session_id": acc.get("user_id"),
-                "status": "success"
-            })
-            f = await logs_col.count_documents({
-                "session_id": acc.get("user_id"),
-                "status": "fail"
-            })
             phone_val = acc.get('phone', 'Unknown') if uid == OWNER_ID else "HIDDEN"
             t += f"{i}. {acc.get('name')} | {phone_val}\n"
-            t += f"   📈 Executed: {s} | 📉 Failed: {f}\n\n"
         
         kb = InlineKeyboardMarkup([
             [InlineKeyboardButton("🎫 Gen Token", callback_data="cmd_addtoken"),
@@ -1118,32 +1189,6 @@ async def handle_all(client, message: Message):
             [InlineKeyboardButton("🩺 Health Check", callback_data="cmd_health")]
         ])
         return await message.reply(t + "────────────────────", reply_markup=kb)
-    
-    # --- Stats ---
-    if text == "📊 Stats":
-        u = await users_col.find_one({"user_id": uid})
-        acc_count = await accounts_col.count_documents({})
-        last = await logs_col.find({
-            "user_id": uid,
-            "summary_task": True
-        }).sort("_id", -1).to_list(length=1)
-        
-        s, f = (last[0].get("s_count", 0), last[0].get("f_count", 0)) if last else (0, 0)
-        
-        live_tasks = sum(1 for status in active_tasks.values() if status in ["running", "paused"])
-        
-        stats_text = (
-            f"🏁 **Last Task Stats**\n"
-            f"✅ Success: {s}\n"
-            f"❌ Fail: {f}\n"
-            f"💳 Credit used: {s}\n"
-            f"👥 Active IDs: {acc_count}\n"
-            f"👤 **Credits:** `{u.get('credits', 0) if u else 0}`\n"
-        )
-        if is_adm or uid == OWNER_ID:
-            stats_text += f"\n🔥 **Live Reporting Tasks:** `{live_tasks}`"
-            
-        return await message.reply(stats_text)
     
     # --- Contact Admin ---
     if text == "👨‍💻 Contact Admin":
@@ -1251,7 +1296,8 @@ async def handle_all(client, message: Message):
                 api_hash=API_HASH,
                 device_model=dev["device_model"],
                 system_version=dev["system_version"],
-                app_version=dev["app_version"]
+                app_version=dev["app_version"],
+                workdir="./sessions"
             )
             await temp.connect()
             try:
@@ -1381,6 +1427,7 @@ async def handle_all(client, message: Message):
                 
                 await process_reporting(message, uid)
             except Exception as e:
+                logger.error(f"Error in rep_count: {e}")
                 await message.reply("❌ Please enter a valid number.")
         
         # Remove account
@@ -1404,7 +1451,8 @@ async def handle_all(client, message: Message):
                         api_hash=API_HASH,
                         device_model=dev["device_model"],
                         system_version=dev["system_version"],
-                        app_version=dev["app_version"]
+                        app_version=dev["app_version"],
+                        workdir="./sessions"
                     ) as tapp:
                         await tapp.log_out()
                 except Exception:
@@ -1527,272 +1575,278 @@ async def handle_all(client, message: Message):
 # --- CALLBACK HANDLER ---
 @bot.on_callback_query()
 async def sub_button_handler(client, callback_query):
-    uid = callback_query.from_user.id
-    data = callback_query.data
-    
-    logger.info(f"Callback received from {uid}: {data}")
-    
-    # --- Flush All Accounts ---
-    if data == "confirm_flush":
-        if uid != OWNER_ID:
-            return
-        accs = await accounts_col.find({}).to_list(length=1000)
-        if not accs:
-            return await callback_query.message.edit_text("❌ No accounts logged in.")
+    try:
+        uid = callback_query.from_user.id
+        data = callback_query.data
         
-        await callback_query.message.edit_text(
-            f"🗑 **Flushing {len(accs)} accounts...**\n"
-            f"Logging out and deleting from database. Please wait."
-        )
-        success = 0
+        logger.info(f"Callback received from {uid}: {data}")
         
-        for i, acc in enumerate(accs):
-            try:
-                dev = get_spoofed_device()
-                async with Client(
-                    f"flush_{uuid.uuid4().hex[:8]}",
-                    in_memory=True,
-                    no_updates=True,
-                    session_string=acc["session"],
-                    api_id=API_ID,
-                    api_hash=API_HASH,
-                    device_model=dev["device_model"],
-                    system_version=dev["system_version"],
-                    app_version=dev["app_version"]
-                ) as app:
-                    await app.log_out()
-            except Exception:
-                pass
+        # --- Flush All Accounts ---
+        if data == "confirm_flush":
+            if uid != OWNER_ID:
+                return
+            accs = await accounts_col.find({}).to_list(length=1000)
+            if not accs:
+                return await callback_query.message.edit_text("❌ No accounts logged in.")
             
-            await accounts_col.delete_one({"_id": acc["_id"]})
-            success += 1
+            await callback_query.message.edit_text(
+                f"🗑 **Flushing {len(accs)} accounts...**\n"
+                f"Logging out and deleting from database. Please wait."
+            )
+            success = 0
             
-            if i % 5 == 0 or i == len(accs) - 1:
-                await callback_query.message.edit_text(
-                    f"🗑 **Flushing Accounts...**\n"
-                    f"✅ Removed: `{success}/{len(accs)}`"
-                )
+            for i, acc in enumerate(accs):
+                try:
+                    dev = get_spoofed_device()
+                    async with Client(
+                        f"flush_{uuid.uuid4().hex[:8]}",
+                        in_memory=True,
+                        no_updates=True,
+                        session_string=acc["session"],
+                        api_id=API_ID,
+                        api_hash=API_HASH,
+                        device_model=dev["device_model"],
+                        system_version=dev["system_version"],
+                        app_version=dev["app_version"],
+                        workdir="./sessions"
+                    ) as app:
+                        await app.log_out()
+                except Exception:
+                    pass
                 
-        return await callback_query.message.edit_text(
-            f"✅ **Successfully flushed and logged out all {success} accounts!**"
-        )
-    
-    elif data == "cancel_flush":
-        if uid != OWNER_ID:
-            return
-        return await callback_query.message.edit_text("✅ **Flush operation cancelled.**")
-    
-    # --- Pause/Resume/Stop ---
-    elif data == "cmd_pause":
-        if uid in active_tasks and active_tasks[uid] == "running":
-            active_tasks[uid] = "paused"
-            kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("▶️ Resume", callback_data="cmd_resume"),
-                    InlineKeyboardButton("🛑 Stop", callback_data="cmd_stop")
-                ]
-            ])
-            try:
-                await callback_query.message.edit_reply_markup(reply_markup=kb)
-            except:
-                pass
-            await callback_query.answer("⏸ Task Paused")
-        else:
-            await callback_query.answer("❌ Task is not running.")
-        return
-    
-    elif data == "cmd_resume":
-        if uid in active_tasks and active_tasks[uid] == "paused":
-            active_tasks[uid] = "running"
-            kb = InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton("⏸ Pause", callback_data="cmd_pause"),
-                    InlineKeyboardButton("🛑 Stop", callback_data="cmd_stop")
-                ]
-            ])
-            try:
-                await callback_query.message.edit_reply_markup(reply_markup=kb)
-            except:
-                pass
-            await callback_query.answer("▶️ Task Resumed")
-        else:
-            await callback_query.answer("❌ Task is not paused.")
-        return
-    
-    elif data == "cmd_stop":
-        if uid in active_tasks and active_tasks[uid] in ["running", "paused"]:
-            active_tasks[uid] = "stopped"
-            await callback_query.answer("🛑 Stopping task...")
-        else:
-            await callback_query.answer("❌ No active task to stop.")
-        return
-    
-    await callback_query.answer()
-    
-    # --- Menu Navigation ---
-    if data == "menu_main":
-        await callback_query.message.edit_text(
-            "Select Reason:",
-            reply_markup=kb_main_report()
-        )
-    elif data == "menu_fraud":
-        await callback_query.message.edit_text(
-            "Select Scam or Fraud Type:",
-            reply_markup=kb_fraud()
-        )
-    elif data == "menu_child":
-        await callback_query.message.edit_text(
-            "Select Child Abuse Type:",
-            reply_markup=kb_child()
-        )
-    elif data == "menu_violence":
-        await callback_query.message.edit_text(
-            "Select Violence Type:",
-            reply_markup=kb_violence()
-        )
-    elif data == "menu_porn":
-        await callback_query.message.edit_text(
-            "Select Adult Content Type:",
-            reply_markup=kb_porn()
-        )
-    elif data == "menu_personal":
-        await callback_query.message.edit_text(
-            "Select Personal Details Type:",
-            reply_markup=kb_personal()
-        )
-    elif data == "menu_illegal":
-        await callback_query.message.edit_text(
-            "Select Illegal Good/Service:",
-            reply_markup=kb_illegal_goods()
-        )
-    elif data == "menu_drugs":
-        await callback_query.message.edit_text(
-            "Select Drug Type:",
-            reply_markup=kb_drugs()
-        )
-    
-    # --- Report Selection ---
-    elif data.startswith("r_") or data.startswith("dm_"):
-        target_type = user_data.get(uid, {}).get("target_type", "channel")
-        user_data[uid] = {
-            "step": "target",
-            "mode": data,
-            "target_type": target_type
-        }
+                await accounts_col.delete_one({"_id": acc["_id"]})
+                success += 1
+                
+                if i % 5 == 0 or i == len(accs) - 1:
+                    await callback_query.message.edit_text(
+                        f"🗑 **Flushing Accounts...**\n"
+                        f"✅ Removed: `{success}/{len(accs)}`"
+                    )
+                    
+            return await callback_query.message.edit_text(
+                f"✅ **Successfully flushed and logged out all {success} accounts!**"
+            )
         
-        if data.startswith("dm_"):
+        elif data == "cancel_flush":
+            if uid != OWNER_ID:
+                return
+            return await callback_query.message.edit_text("✅ **Flush operation cancelled.**")
+        
+        # --- Pause/Resume/Stop ---
+        elif data == "cmd_pause":
+            if uid in active_tasks and active_tasks[uid] == "running":
+                active_tasks[uid] = "paused"
+                kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("▶️ Resume", callback_data="cmd_resume"),
+                        InlineKeyboardButton("🛑 Stop", callback_data="cmd_stop")
+                    ]
+                ])
+                try:
+                    await callback_query.message.edit_reply_markup(reply_markup=kb)
+                except:
+                    pass
+                await callback_query.answer("⏸ Task Paused")
+            else:
+                await callback_query.answer("❌ Task is not running.")
+            return
+        
+        elif data == "cmd_resume":
+            if uid in active_tasks and active_tasks[uid] == "paused":
+                active_tasks[uid] = "running"
+                kb = InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton("⏸ Pause", callback_data="cmd_pause"),
+                        InlineKeyboardButton("🛑 Stop", callback_data="cmd_stop")
+                    ]
+                ])
+                try:
+                    await callback_query.message.edit_reply_markup(reply_markup=kb)
+                except:
+                    pass
+                await callback_query.answer("▶️ Task Resumed")
+            else:
+                await callback_query.answer("❌ Task is not paused.")
+            return
+        
+        elif data == "cmd_stop":
+            if uid in active_tasks and active_tasks[uid] in ["running", "paused"]:
+                active_tasks[uid] = "stopped"
+                await callback_query.answer("🛑 Stopping task...")
+            else:
+                await callback_query.answer("❌ No active task to stop.")
+            return
+        
+        await callback_query.answer()
+        
+        # --- Menu Navigation ---
+        if data == "menu_main":
             await callback_query.message.edit_text(
-                "🎯 Send the **Target @Username or User ID** for DM Attack:"
+                "Select Reason:",
+                reply_markup=kb_main_report()
             )
-        elif target_type == "bot":
+        elif data == "menu_fraud":
             await callback_query.message.edit_text(
-                "🎯 Send the **Bot @Username** (e.g., @Resso_singing_bot) to report:"
+                "Select Scam or Fraud Type:",
+                reply_markup=kb_fraud()
             )
-        else:
+        elif data == "menu_child":
             await callback_query.message.edit_text(
-                "🎯 Send the **Invite Link**, **@Username**, or **Message Link** of target:"
+                "Select Child Abuse Type:",
+                reply_markup=kb_child()
             )
-    
-    # --- Admin Commands ---
-    elif data == "cmd_broadcast":
-        user_data[uid] = {"step": "broadcast"}
-        await callback_query.message.reply(
-            "📢 Send the message (text, image, or video) you want to broadcast:"
-        )
-    
-    elif data == "cmd_kill_all":
-        if uid != OWNER_ID:
-            return
-        for k in active_tasks:
-            active_tasks[k] = "stopped"
-        await callback_query.message.reply(
-            "🛑 **KILL SWITCH ACTIVATED.** "
-            "All live reporting tasks across all users have been instructed to stop safely."
-        )
-    
-    elif data == "view_credit_logs":
-        if uid != OWNER_ID:
-            return
-        logs = await credit_logs_col.find({}).sort("_id", -1).to_list(10)
-        if not logs:
-            return await callback_query.message.reply("No admin credit logs yet.")
-        res = "💳 **Recent Admin Credit Logs:**\n\n"
-        for l in logs:
-            res += (
-                f"👮‍♂️ Admin: `{l.get('admin_id')}` ➡️ 👤 User: `{l.get('target_user')}`\n"
-                f"💰 Amount: `{l.get('amount')}` | 📅 {l.get('date')}\n\n"
+        elif data == "menu_violence":
+            await callback_query.message.edit_text(
+                "Select Violence Type:",
+                reply_markup=kb_violence()
             )
-        await callback_query.message.reply(res)
-    
-    elif data == "view_receipts":
-        if uid != OWNER_ID:
-            return
-        r = await receipts_col.find({}).sort("_id", -1).to_list(5)
-        if not r:
-            return await callback_query.message.reply("No receipts yet.")
-        msg = "📑 **Last 5 API Receipts (Proofs):**\n\n"
-        for item in r:
-            msg += (
-                f"🎯 Target: `{item.get('target')}`\n"
-                f"👤 Acc ID: `{item.get('session_used')}`\n"
-                f"🤖 **API Response:** `{str(item.get('raw_response', ''))[:100]}...`\n\n"
+        elif data == "menu_porn":
+            await callback_query.message.edit_text(
+                "Select Adult Content Type:",
+                reply_markup=kb_porn()
             )
-        await callback_query.message.reply(msg)
-    
-    elif data == "view_refunds":
-        if uid != OWNER_ID:
-            return
-        logs = await refund_logs_col.find({}).sort("_id", -1).to_list(length=10)
-        if not logs:
-            return await callback_query.message.reply("No refunds yet.")
-        res = "💰 **Last 10 Refund Logs:**\n\n"
-        for l in logs:
-            res += f"👤 `{l.get('user_id')}`\n🎯 `{l.get('target')}`\n📅 {l.get('date')}\n\n"
-        await callback_query.message.reply(res)
-    
-    elif data == "cmd_addtoken":
-        tk = str(uuid.uuid4())[:8].upper()
-        await tokens_col.insert_one({"token": tk, "used": False})
-        await callback_query.message.reply(f"🎫 **New Token:** `{tk}`")
-    
-    elif data == "cmd_users":
-        users = await users_col.find({}).to_list(length=500)
-        if not users:
-            return await callback_query.message.reply("❌ No active users found.")
-        res = "👥 **Active Bot Users & Credits**\n────────────────────\n"
-        for i, u in enumerate(users, 1):
-            res += f"{i}. {u.get('name', 'User')} | `{u.get('user_id')}` | 💳: {u.get('credits', 0)}\n"
-        await callback_query.message.reply(res)
-    
-    elif data == "cmd_health":
-        await perform_health_check(callback_query.message)
-    
-    elif data == "cmd_addcredit":
-        user_data[uid] = {"step": "addcredit"}
-        await callback_query.message.reply(
-            "💳 Send User ID and Amount separated by space "
-            "(e.g., `123456789 10` or `-10` to remove):"
-        )
-    
-    elif data == "cmd_rmuser":
-        user_data[uid] = {"step": "rmuser"}
-        await callback_query.message.reply("🗑 Send User ID to revoke access:")
-    
-    elif data == "cmd_addadmin":
-        user_data[uid] = {"step": "addadmin"}
-        await callback_query.message.reply("👑 Send User ID to promote to Admin:")
-    
-    elif data == "cmd_rmadmin":
-        user_data[uid] = {"step": "rmadmin"}
-        await callback_query.message.reply("🚫 Send User ID to demote from Admin:")
-    
-    elif data == "cmd_join":
-        user_data[uid] = {"step": "join"}
-        await callback_query.message.reply("🛰 Send the **Invite Link** or **@Username** to join:")
-    
-    elif data == "cmd_leave":
-        user_data[uid] = {"step": "leave"}
-        await callback_query.message.reply("🚪 Send the Link or Username to leave:")
+        elif data == "menu_personal":
+            await callback_query.message.edit_text(
+                "Select Personal Details Type:",
+                reply_markup=kb_personal()
+            )
+        elif data == "menu_illegal":
+            await callback_query.message.edit_text(
+                "Select Illegal Good/Service:",
+                reply_markup=kb_illegal_goods()
+            )
+        elif data == "menu_drugs":
+            await callback_query.message.edit_text(
+                "Select Drug Type:",
+                reply_markup=kb_drugs()
+            )
+        
+        # --- Report Selection ---
+        elif data.startswith("r_") or data.startswith("dm_"):
+            target_type = user_data.get(uid, {}).get("target_type", "channel")
+            user_data[uid] = {
+                "step": "target",
+                "mode": data,
+                "target_type": target_type
+            }
+            
+            if data.startswith("dm_"):
+                await callback_query.message.edit_text(
+                    "🎯 Send the **Target @Username or User ID** for DM Attack:"
+                )
+            elif target_type == "bot":
+                await callback_query.message.edit_text(
+                    "🎯 Send the **Bot @Username** (e.g., @Resso_singing_bot) to report:"
+                )
+            else:
+                await callback_query.message.edit_text(
+                    "🎯 Send the **Invite Link**, **@Username**, or **Message Link** of target:"
+                )
+        
+        # --- Admin Commands ---
+        elif data == "cmd_broadcast":
+            user_data[uid] = {"step": "broadcast"}
+            await callback_query.message.reply(
+                "📢 Send the message (text, image, or video) you want to broadcast:"
+            )
+        
+        elif data == "cmd_kill_all":
+            if uid != OWNER_ID:
+                return
+            for k in active_tasks:
+                active_tasks[k] = "stopped"
+            await callback_query.message.reply(
+                "🛑 **KILL SWITCH ACTIVATED.** "
+                "All live reporting tasks across all users have been instructed to stop safely."
+            )
+        
+        elif data == "view_credit_logs":
+            if uid != OWNER_ID:
+                return
+            logs = await credit_logs_col.find({}).sort("_id", -1).to_list(10)
+            if not logs:
+                return await callback_query.message.reply("No admin credit logs yet.")
+            res = "💳 **Recent Admin Credit Logs:**\n\n"
+            for l in logs:
+                res += (
+                    f"👮‍♂️ Admin: `{l.get('admin_id')}` ➡️ 👤 User: `{l.get('target_user')}`\n"
+                    f"💰 Amount: `{l.get('amount')}` | 📅 {l.get('date')}\n\n"
+                )
+            await callback_query.message.reply(res)
+        
+        elif data == "view_receipts":
+            if uid != OWNER_ID:
+                return
+            r = await receipts_col.find({}).sort("_id", -1).to_list(5)
+            if not r:
+                return await callback_query.message.reply("No receipts yet.")
+            msg = "📑 **Last 5 API Receipts (Proofs):**\n\n"
+            for item in r:
+                msg += (
+                    f"🎯 Target: `{item.get('target')}`\n"
+                    f"👤 Acc ID: `{item.get('session_used')}`\n"
+                    f"🤖 **API Response:** `{str(item.get('raw_response', ''))[:100]}...`\n\n"
+                )
+            await callback_query.message.reply(msg)
+        
+        elif data == "view_refunds":
+            if uid != OWNER_ID:
+                return
+            logs = await refund_logs_col.find({}).sort("_id", -1).to_list(length=10)
+            if not logs:
+                return await callback_query.message.reply("No refunds yet.")
+            res = "💰 **Last 10 Refund Logs:**\n\n"
+            for l in logs:
+                res += f"👤 `{l.get('user_id')}`\n🎯 `{l.get('target')}`\n📅 {l.get('date')}\n\n"
+            await callback_query.message.reply(res)
+        
+        elif data == "cmd_addtoken":
+            tk = str(uuid.uuid4())[:8].upper()
+            await tokens_col.insert_one({"token": tk, "used": False})
+            await callback_query.message.reply(f"🎫 **New Token:** `{tk}`")
+        
+        elif data == "cmd_users":
+            users = await users_col.find({}).to_list(length=500)
+            if not users:
+                return await callback_query.message.reply("❌ No active users found.")
+            res = "👥 **Active Bot Users & Credits**\n────────────────────\n"
+            for i, u in enumerate(users, 1):
+                res += f"{i}. {u.get('name', 'User')} | `{u.get('user_id')}` | 💳: {u.get('credits', 0)}\n"
+            await callback_query.message.reply(res)
+        
+        elif data == "cmd_health":
+            await perform_health_check(callback_query.message)
+        
+        elif data == "cmd_addcredit":
+            user_data[uid] = {"step": "addcredit"}
+            await callback_query.message.reply(
+                "💳 Send User ID and Amount separated by space "
+                "(e.g., `123456789 10` or `-10` to remove):"
+            )
+        
+        elif data == "cmd_rmuser":
+            user_data[uid] = {"step": "rmuser"}
+            await callback_query.message.reply("🗑 Send User ID to revoke access:")
+        
+        elif data == "cmd_addadmin":
+            user_data[uid] = {"step": "addadmin"}
+            await callback_query.message.reply("👑 Send User ID to promote to Admin:")
+        
+        elif data == "cmd_rmadmin":
+            user_data[uid] = {"step": "rmadmin"}
+            await callback_query.message.reply("🚫 Send User ID to demote from Admin:")
+        
+        elif data == "cmd_join":
+            user_data[uid] = {"step": "join"}
+            await callback_query.message.reply("🛰 Send the **Invite Link** or **@Username** to join:")
+        
+        elif data == "cmd_leave":
+            user_data[uid] = {"step": "leave"}
+            await callback_query.message.reply("🚪 Send the Link or Username to leave:")
+            
+    except Exception as e:
+        logger.error(f"Error in callback handler: {e}")
+        await callback_query.message.reply(f"❌ Error: {str(e)}")
 
 # --- COMMAND HANDLERS ---
 @bot.on_message(filters.command("checkdead") & filters.private)
@@ -1825,7 +1879,8 @@ async def checkdead_cmd(client, message: Message):
                 api_hash=API_HASH,
                 device_model=dev["device_model"],
                 system_version=dev["system_version"],
-                app_version=dev["app_version"]
+                app_version=dev["app_version"],
+                workdir="./sessions"
             ) as app:
                 await app.invoke(functions.account.UpdateStatus(offline=False))
                 await app.get_me()
@@ -1894,7 +1949,8 @@ async def cleandead_cmd(client, message: Message):
                 api_hash=API_HASH,
                 device_model=dev["device_model"],
                 system_version=dev["system_version"],
-                app_version=dev["app_version"]
+                app_version=dev["app_version"],
+                workdir="./sessions"
             ) as app:
                 await app.get_me()
                 alive += 1
@@ -2176,16 +2232,24 @@ async def redeem_tk(client, message: Message):
 
 # --- MAIN ---
 print("🤖 Bot is starting...")
+print(f"API_ID: {API_ID}")
+print(f"MONGO_URI: {MONGO_URI}")
 
 async def main():
-    # Start keep-alive task
-    asyncio.create_task(keep_alive_sessions())
-    
-    # Start bot
-    await bot.start()
-    print("✅ Bot started successfully!")
-    await bot.idle()
-    await bot.stop()
+    try:
+        # Start keep-alive task
+        asyncio.create_task(keep_alive_sessions())
+        
+        # Start bot
+        await bot.start()
+        print("✅ Bot started successfully!")
+        print(f"Bot username: @{(await bot.get_me()).username}")
+        await bot.idle()
+    except Exception as e:
+        logger.error(f"Error in main: {e}")
+        raise
+    finally:
+        await bot.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
