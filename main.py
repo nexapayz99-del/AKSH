@@ -36,17 +36,17 @@ BOT_TOKEN = os.getenv("BOT_TOKEN")
 MONGO_URI = os.getenv("MONGO_URI")
 OWNER_ID = int(os.getenv("OWNER_ID", 0))
 
-# Database Setup - Using your existing database
+# Database Setup
 db_client = AsyncIOMotorClient(MONGO_URI)
-db = db_client["telegram_bot"]  # Your existing database
-accounts_col = db["sessions"]  # Your existing sessions collection
-users_col = db["authorized_users"]  # Your existing users collection
-tokens_col = db["keys"]  # Your existing tokens collection
-admin_col = db["admins"]  # Your existing admins collection
-logs_col = db["report_logs"]  # Your existing logs collection
-refund_logs_col = db["refund_logs"]  # Your existing refund logs
-receipts_col = db["api_receipts"]  # Your existing receipts
-credit_logs_col = db["credit_logs"]  # Your existing credit logs
+db = db_client["telegram_bot"]
+accounts_col = db["sessions"]
+users_col = db["authorized_users"]
+tokens_col = db["keys"]
+admin_col = db["admins"]
+logs_col = db["report_logs"]
+refund_logs_col = db["refund_logs"]
+receipts_col = db["api_receipts"]
+credit_logs_col = db["credit_logs"]
 
 bot = Client(
     "report_bot",
@@ -210,7 +210,7 @@ def kb_drugs():
 # --- BACKGROUND KEEP-ALIVE TASK ---
 async def keep_alive_sessions():
     while True:
-        await asyncio.sleep(86400)  # 24 hours
+        await asyncio.sleep(86400)
         logger.info("Running 24h background keep-alive check...")
         try:
             accs = await accounts_col.find({}).to_list(length=1000)
@@ -1025,6 +1025,27 @@ async def finalize_login(message, temp, uid):
         del user_data[uid]
 
 # --- BOT HANDLERS ---
+@bot.on_message(filters.command("start") & filters.private)
+async def start_cmd(client, message: Message):
+    """Handle /start command"""
+    uid = message.from_user.id
+    is_admin = await check_admin(uid)
+    
+    logger.info(f"User {uid} started the bot")
+    
+    if await check_access(uid):
+        await message.reply(
+            "✅ **Bot Activated!**\n\n"
+            "Welcome to the Report Bot. Use the menu below to navigate.",
+            reply_markup=get_main_menu(uid, is_admin)
+        )
+    else:
+        await message.reply(
+            "⚠️ **Access Denied**\n\n"
+            "You are not authorized to use this bot.\n"
+            "Please use `/redeem TOKEN` to gain access."
+        )
+
 @bot.on_message(filters.private & ~filters.command([
     "start", "redeem", "addtoken", "addcredit", "broadcast",
     "addadmin", "rmadmin", "users", "rmuser", "join", "leave",
@@ -1034,7 +1055,9 @@ async def handle_all(client, message: Message):
     text = message.text or message.caption or ""
     uid = message.from_user.id
     
+    # Check access for non-command messages
     if not await check_access(uid):
+        await message.reply("⚠️ Access Denied. Use `/start` to check your status.")
         return
     
     is_adm = await check_admin(uid)
@@ -1502,10 +1525,12 @@ async def handle_all(client, message: Message):
             del user_data[uid]
 
 # --- CALLBACK HANDLER ---
-@bot.on_callback_query(filters.regex("^(cmd_|menu_|r_|dm_|view_receipts|view_refunds|view_credit_logs|confirm_flush|cancel_flush)"))
+@bot.on_callback_query()
 async def sub_button_handler(client, callback_query):
     uid = callback_query.from_user.id
     data = callback_query.data
+    
+    logger.info(f"Callback received from {uid}: {data}")
     
     # --- Flush All Accounts ---
     if data == "confirm_flush":
@@ -1770,19 +1795,6 @@ async def sub_button_handler(client, callback_query):
         await callback_query.message.reply("🚪 Send the Link or Username to leave:")
 
 # --- COMMAND HANDLERS ---
-@bot.on_message(filters.command("start") & filters.private)
-async def start_cmd(client, message: Message):
-    uid = message.from_user.id
-    is_admin = await check_admin(uid)
-    
-    if await check_access(uid):
-        await message.reply(
-            "✅ Bot Active.",
-            reply_markup=get_main_menu(uid, is_admin)
-        )
-    else:
-        await message.reply("⚠️ Access Denied. Use `/redeem TOKEN`")
-
 @bot.on_message(filters.command("checkdead") & filters.private)
 async def checkdead_cmd(client, message: Message):
     if not await check_admin(message.from_user.id):
@@ -2165,16 +2177,15 @@ async def redeem_tk(client, message: Message):
 # --- MAIN ---
 print("🤖 Bot is starting...")
 
-from pyrogram import idle
-
 async def main():
+    # Start keep-alive task
     asyncio.create_task(keep_alive_sessions())
-
+    
+    # Start bot
     await bot.start()
     print("✅ Bot started successfully!")
-
-    while True:
-        await asyncio.sleep(3600)
+    await bot.idle()
+    await bot.stop()
 
 if __name__ == "__main__":
     asyncio.run(main())
