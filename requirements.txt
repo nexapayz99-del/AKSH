@@ -1,7 +1,4 @@
-# requirements.txt
 pyrogram==2.0.106
 pymongo==4.5.0
 python-dotenv==1.0.0
 motor==3.3.2
-asyncio
-uuid
