@@ -5,7 +5,7 @@ import logging
 import random
 import time
 from datetime import datetime
-from pyrogram import Client, filters
+from pyrogram import Client, filters , idle
 from pyrogram.errors import (
     SessionPasswordNeeded, FloodWait, UsernameInvalid, 
     PeerIdInvalid, InviteHashExpired, UserAlreadyParticipant, 
